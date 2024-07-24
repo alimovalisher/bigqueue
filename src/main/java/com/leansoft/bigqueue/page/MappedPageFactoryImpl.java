@@ -3,6 +3,8 @@ package com.leansoft.bigqueue.page;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.Collection;
@@ -12,7 +14,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.leansoft.bigqueue.cache.ILRUCache;
 import com.leansoft.bigqueue.cache.LRUCacheImpl;
@@ -31,9 +34,9 @@ import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
  *
  */
 public class MappedPageFactoryImpl implements IMappedPageFactory {
-	
-	private final static Logger logger = Logger.getLogger(MappedPageFactoryImpl.class);
-	
+
+	private final static Logger logger = LoggerFactory.getLogger(MappedPageFactoryImpl.class);
+
 	private int pageSize;
 	private String pageDir;
 	private File pageDirFile;
@@ -77,21 +80,20 @@ public class MappedPageFactoryImpl implements IMappedPageFactory {
 				synchronized(lock) { // only lock the creation of page index
 					mpi = cache.get(index); // double check
 					if (mpi == null) {
-						RandomAccessFile raf = null;
-						FileChannel channel = null;
-						try {
-							String fileName = this.getFileNameByIndex(index);
-							raf = new RandomAccessFile(fileName, "rw");
-							channel = raf.getChannel();
-							MappedByteBuffer mbb = channel.map(READ_WRITE, 0, this.pageSize);
-							mpi = new MappedPageImpl(mbb, fileName, index);
+                        String fileName = this.getFileNameByIndex(index);
+
+						try (RandomAccessFile raf = new RandomAccessFile(fileName, "rw");
+							 FileChannel channel = raf.getChannel();) {
+
+							Arena arena = Arena.ofShared();
+
+							MemorySegment map = channel.map(READ_WRITE, 0, this.pageSize, arena);
+							mpi = new MappedPageImpl(map, arena, fileName, index);
+
 							cache.put(index, mpi, ttl);
 							if (logger.isDebugEnabled()) {
 								logger.debug("Mapped page for " + fileName + " was just created and cached.");
 							}
-						} finally {
-							if (channel != null) channel.close();
-							if (raf != null) raf.close();
 						}
 					}
 				}

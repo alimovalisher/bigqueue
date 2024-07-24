@@ -1,25 +1,29 @@
 package com.leansoft.bigqueue.page;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.Closeable;
 import java.io.IOException;
-import java.lang.reflect.Method;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 
-import org.apache.log4j.Logger;
-
 public class MappedPageImpl implements IMappedPage, Closeable {
-	
-	private final static Logger logger = Logger.getLogger(MappedPageImpl.class);
-	
+
+	private final static Logger logger = LoggerFactory.getLogger(MappedPageImpl.class);
+
 	private ThreadLocalByteBuffer threadLocalBuffer;
 	private volatile boolean dirty = false;
 	private volatile boolean closed = false;
-	private String pageFile;
-	private long index;
-	
-	public MappedPageImpl(MappedByteBuffer mbb, String pageFile, long index) {
-		this.threadLocalBuffer = new ThreadLocalByteBuffer(mbb);
+	private final Arena arena;
+	private final String pageFile;
+	private final long index;
+
+	public MappedPageImpl(MemorySegment mbb, Arena arena, String pageFile, long index) {
+		this.threadLocalBuffer = new ThreadLocalByteBuffer(mbb.asByteBuffer());
+		this.arena = arena;
 		this.pageFile = pageFile;
 		this.index = index;
 	}
@@ -29,10 +33,9 @@ public class MappedPageImpl implements IMappedPage, Closeable {
 			if (closed) return;
 
 			flush();
-			
-			MappedByteBuffer srcBuf = (MappedByteBuffer)threadLocalBuffer.getSourceBuffer();
-			unmap(srcBuf);
-			
+
+			arena.close();
+
 			this.threadLocalBuffer = null; // hint GC
 			
 			closed = true;
@@ -75,51 +78,7 @@ public class MappedPageImpl implements IMappedPage, Closeable {
 		buf.position(position);
 		return buf;
 	}
-	
-	private static void unmap(MappedByteBuffer buffer)
-	{
-		Cleaner.clean(buffer);
-	}
-	
-    /**
-     * Helper class allowing to clean direct buffers.
-     */
-    private static class Cleaner {
-        public static final boolean CLEAN_SUPPORTED;
-        private static final Method directBufferCleaner;
-        private static final Method directBufferCleanerClean;
 
-        static {
-            Method directBufferCleanerX = null;
-            Method directBufferCleanerCleanX = null;
-            boolean v;
-            try {
-                directBufferCleanerX = Class.forName("java.nio.DirectByteBuffer").getMethod("cleaner");
-                directBufferCleanerX.setAccessible(true);
-                directBufferCleanerCleanX = Class.forName("sun.misc.Cleaner").getMethod("clean");
-                directBufferCleanerCleanX.setAccessible(true);
-                v = true;
-            } catch (Exception e) {
-                v = false;
-            }
-            CLEAN_SUPPORTED = v;
-            directBufferCleaner = directBufferCleanerX;
-            directBufferCleanerClean = directBufferCleanerCleanX;
-        }
-
-        public static void clean(ByteBuffer buffer) {
-    		if (buffer == null) return;
-            if (CLEAN_SUPPORTED && buffer.isDirect()) {
-                try {
-                    Object cleaner = directBufferCleaner.invoke(buffer);
-                    directBufferCleanerClean.invoke(cleaner);
-                } catch (Exception e) {
-                    // silently ignore exception
-                }
-            }
-        }
-    }
-    
     private static class ThreadLocalByteBuffer extends ThreadLocal<ByteBuffer> {
     	private ByteBuffer _src;
     	
